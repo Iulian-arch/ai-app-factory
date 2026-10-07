@@ -1,0 +1,10 @@
+.env
+browser_profile/
+cookies.txt
+lessons.json
+recon_report.json
+agent.log
+__pycache__/
+recon_*.png
+recon_*.html
+debug_*.html
