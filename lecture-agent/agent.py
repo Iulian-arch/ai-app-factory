@@ -138,6 +138,7 @@ def main():
     ap.add_argument("--refresh", action="store_true", help="reface lista de lecții")
     a = ap.parse_args()
 
+    c.log(f"Versiune agent: {c.AGENT_VERSION}")
     c.check_output_dir()
     if not a.skip_obs_check:
         from obs_recorder import Recorder  # verificăm OBS înainte să deschidem Chrome

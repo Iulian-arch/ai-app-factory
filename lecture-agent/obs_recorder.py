@@ -55,6 +55,21 @@ def _ensure_websocket_config():
     print(f"Am activat WebSocket în setările OBS ({cfg}), port {OBS_PORT}.", flush=True)
 
 
+def _start_obs(exe):
+    """Pornește OBS ca la dublu-click (ShellExecute), ca să meargă și cu permisiuni speciale."""
+    folder = str(Path(exe).parent)
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(exe, arguments="--disable-shutdown-check", cwd=folder)
+        else:
+            subprocess.Popen([exe, "--disable-shutdown-check"], cwd=folder)
+    except Exception as e:
+        raise FatalError(
+            f"Nu pot porni OBS automat ({e}).\n"
+            "Pornește OBS TU (dublu-click pe iconița lui), așteaptă să se deschidă complet și rulează din nou comanda. "
+            "Setările WebSocket au fost deja scrise, deci OBS le va încărca la pornire.") from e
+
+
 class Recorder:
     def __init__(self):
         try:
@@ -74,7 +89,7 @@ class Recorder:
             except Exception as e:
                 print(f"Nu am putut scrie setările OBS: {e}", flush=True)
             print("Pornesc OBS...", flush=True)
-            subprocess.Popen([exe, "--disable-shutdown-check"], cwd=str(Path(exe).parent))
+            _start_obs(exe)
             for _ in range(30):
                 time.sleep(3)
                 try:
