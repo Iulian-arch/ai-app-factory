@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -26,6 +27,14 @@ def _find_obs():
 
 def _connect():
     return obs.ReqClient(host=OBS_HOST, port=OBS_PORT, password=OBS_PASSWORD, timeout=10)
+
+
+def _port_open():
+    try:
+        socket.create_connection(("127.0.0.1", OBS_PORT), timeout=1).close()
+        return True
+    except OSError:
+        return False
 
 
 def _obs_running():
@@ -90,7 +99,7 @@ class Recorder:
                 print(f"Nu am putut scrie setările OBS: {e}", flush=True)
             print("Pornesc OBS...", flush=True)
             _start_obs(exe)
-            for _ in range(30):
+            for i in range(30):
                 time.sleep(3)
                 try:
                     self.cl = _connect()
@@ -98,6 +107,13 @@ class Recorder:
                     return
                 except Exception as e:
                     err = e
+                    print(f"  [{(i + 1) * 3}s] OBS nu răspunde încă. OBS pornit: "
+                          f"{'da' if _obs_running() else 'NU'}, port {OBS_PORT}: "
+                          f"{'deschis' if _port_open() else 'închis'}. Eroare: {type(e).__name__} {str(e)[:100]}",
+                          flush=True)
+                    if i == 4:
+                        print("  (Dacă vezi pe ecran o fereastră OBS cu întrebări, de ex. wizard de configurare "
+                              "sau 'rulează în modul sigur', închide-o sau apasă No/Cancel.)", flush=True)
         raise FatalError(
             f"Nu mă pot conecta la OBS ({OBS_HOST}:{OBS_PORT}): {err}\n"
             + ("" if exe else "Nu am găsit OBS pe calculator: pune calea la obs64.exe în .env (OBS_PATH=...).\n")

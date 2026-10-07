@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-AGENT_VERSION = "2026-10-07-obs-startfile"
+AGENT_VERSION = "2026-10-07-obs-diagnostic"
 
 
 def load_env():
