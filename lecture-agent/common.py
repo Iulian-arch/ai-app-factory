@@ -150,6 +150,21 @@ def collect_lessons(page):
             except Exception:
                 pass
     raw = page.evaluate(_COLLECT_JS, LESSON_URL_REGEX)
+    if not raw:  # lecțiile apar poate abia după "Acces curs" / "Start"
+        for label in ("Acces curs", "Start", "Începe", "Continuă"):
+            btn = page.get_by_role("link", name=re.compile(label, re.I)).or_(
+                page.get_by_role("button", name=re.compile(label, re.I)))
+            if btn.count() > 0:
+                try:
+                    btn.first.click(timeout=3000)
+                    page.wait_for_load_state("networkidle")
+                    if page.url.rstrip("/") != COURSE_URL.rstrip("/"):
+                        page.goto(COURSE_URL, wait_until="networkidle")
+                    raw = page.evaluate(_COLLECT_JS, LESSON_URL_REGEX)
+                    if raw:
+                        break
+                except Exception:
+                    pass
     modules, order = {}, []
     for item in raw:
         key = item["module_title"] or "Fără modul"
