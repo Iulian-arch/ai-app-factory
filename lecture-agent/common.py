@@ -48,6 +48,10 @@ PROFILE_DIR = HERE / "browser_profile"  # aici rămâne sesiunea de login
 LESSONS_JSON = HERE / "lessons.json"
 
 
+class FatalError(Exception):
+    """Eroare după care nu are sens să continuăm (ex. OBS nu rulează)."""
+
+
 def settle(page, ms=8000):
     """Așteaptă să se încarce pagina, dar nu blochează dacă site-ul face cereri la nesfârșit."""
     try:
@@ -213,26 +217,49 @@ def _course_page_url(n):
     return COURSE_URL if n == 1 else f"{COURSE_URL}?ld-courseinfo-lesson-page={n}"
 
 
+def _expand(page):
+    for sel in (".ld-expand-button",):
+        for el in page.locator(sel).all()[:5]:
+            try:
+                el.click(timeout=800)
+            except Exception:
+                pass
+
+
+def _eval_page(page, module):
+    return page.evaluate(_COLLECT_JS, {"rx": LESSON_URL_REGEX, "start": module})
+
+
 def collect_lessons(page):
     """Citește TOATE paginile cursului (LearnDash are paginare) și grupează lecțiile pe module."""
     raw, seen_urls, module = [], set(), None
     for n in range(1, 30):
         page.goto(_course_page_url(n), wait_until="domcontentloaded")
         settle(page)
-        for sel in (".ld-expand-button", ".ld-expand-button.ld-primary-background"):
-            for el in page.locator(sel).all()[:5]:
-                try:
-                    el.click(timeout=800)
-                except Exception:
-                    pass
-        res = page.evaluate(_COLLECT_JS, {"rx": LESSON_URL_REGEX, "start": module})
+        _expand(page)
+        res = _eval_page(page, module)
         new = [i for i in res["items"] if i["url"] not in seen_urls]
+        log(f"Pagina {n} ({page.url}): {len(res['items'])} linkuri de lecții, {len(new)} noi")
+        if not new and n > 1:  # încercăm butonul de paginare din pagina 1
+            page.goto(COURSE_URL, wait_until="domcontentloaded")
+            settle(page)
+            link = page.locator(f"a[href*='ld-courseinfo-lesson-page={n}']").first
+            if link.count() > 0:
+                try:
+                    link.click(timeout=5000)
+                    settle(page, 12000)
+                    _expand(page)
+                    res = _eval_page(page, module)
+                    new = [i for i in res["items"] if i["url"] not in seen_urls]
+                    log(f"Pagina {n} (prin click pe paginare): {len(new)} lecții noi")
+                except Exception as e:
+                    log(f"Click pe paginare eșuat: {e}")
         if not new:
+            (HERE / f"debug_course_page{n}.html").write_text(page.content(), encoding="utf-8")
             break
         module = res["last_module"]
         seen_urls.update(i["url"] for i in new)
         raw.extend(new)
-        log(f"Pagina cursului {n}: {len(new)} lecții noi (total {len(raw)})")
     modules, order = {}, []
     for item in raw:
         key = item["module_title"] or "Fără modul"

@@ -5,12 +5,20 @@ from pathlib import Path
 
 import obsws_python as obs
 
-from common import OBS_HOST, OBS_PASSWORD, OBS_PORT
+from common import FatalError, OBS_HOST, OBS_PASSWORD, OBS_PORT
 
 
 class Recorder:
     def __init__(self):
-        self.cl = obs.ReqClient(host=OBS_HOST, port=OBS_PORT, password=OBS_PASSWORD, timeout=10)
+        try:
+            self.cl = obs.ReqClient(host=OBS_HOST, port=OBS_PORT, password=OBS_PASSWORD, timeout=10)
+        except Exception as e:
+            raise FatalError(
+                f"Nu mă pot conecta la OBS ({OBS_HOST}:{OBS_PORT}): {e}\n"
+                "1) Pornește programul OBS.\n"
+                "2) În OBS: Tools -> WebSocket Server Settings -> bifează 'Enable WebSocket server', "
+                "port 4455, setează o parolă.\n"
+                "3) Pune aceeași parolă în fișierul .env la OBS_PASSWORD=...") from e
 
     def start(self):
         if self.cl.get_record_status().output_active:

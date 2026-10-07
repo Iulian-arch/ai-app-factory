@@ -7,3 +7,4 @@ agent.log
 __pycache__/
 recon_*.png
 recon_*.html
+debug_*.html

@@ -134,10 +134,18 @@ def main():
     ap.add_argument("--only", nargs=2, type=int, metavar=("MODUL", "LECTIA"))
     ap.add_argument("--module", type=int)
     ap.add_argument("--force-obs", action="store_true")
+    ap.add_argument("--skip-obs-check", action="store_true", help="doar pentru a face lista de lecții")
     ap.add_argument("--refresh", action="store_true", help="reface lista de lecții")
     a = ap.parse_args()
 
     c.check_output_dir()
+    if not a.skip_obs_check:
+        from obs_recorder import Recorder  # verificăm OBS înainte să deschidem Chrome
+        try:
+            Recorder()
+        except c.FatalError as e:
+            sys.exit(f"EROARE: {e}")
+        c.log("OBS: conectat.")
     with sync_playwright() as p:
         ctx = c.launch_browser(p)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -160,6 +168,10 @@ def main():
                 try:
                     process(ctx, l, a.force_obs)
                     break
+                except c.FatalError as e:
+                    c.log(f"OPRIT: {e}")
+                    c.close_browser(ctx)
+                    sys.exit(1)
                 except Exception:
                     c.log(f"Eroare (încercarea {attempt}) la Modul {l['module']} lecția {l['lesson']}:\n"
                           + traceback.format_exc())
