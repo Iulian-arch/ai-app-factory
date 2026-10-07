@@ -97,7 +97,7 @@ class Recorder:
                 _ensure_websocket_config()
             except Exception as e:
                 print(f"Nu am putut scrie setările OBS: {e}", flush=True)
-            print("Pornesc OBS...", flush=True)
+            print(f"Pornesc OBS: {exe}", flush=True)
             _start_obs(exe)
             for i in range(30):
                 time.sleep(3)
@@ -111,6 +111,12 @@ class Recorder:
                           f"{'da' if _obs_running() else 'NU'}, port {OBS_PORT}: "
                           f"{'deschis' if _port_open() else 'închis'}. Eroare: {type(e).__name__} {str(e)[:100]}",
                           flush=True)
+                    if i >= 4 and not _obs_running():
+                        raise FatalError(
+                            f"OBS nu a pornit (programul {exe} nu apare în procese după 15 secunde).\n"
+                            "Pornește OBS TU, cu dublu-click pe iconița lui, așteaptă să se deschidă complet "
+                            "și rulează din nou aceeași comandă. Setările WebSocket sunt deja scrise.\n"
+                            "Dacă OBS nu se deschide nici așa, spune-mi ce mesaj apare.") from e
                     if i == 4:
                         print("  (Dacă vezi pe ecran o fereastră OBS cu întrebări, de ex. wizard de configurare "
                               "sau 'rulează în modul sigur', închide-o sau apasă No/Cancel.)", flush=True)
