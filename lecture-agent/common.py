@@ -75,12 +75,17 @@ def check_output_dir():
 def launch_browser(p, fullscreen_args=True):
     args = ["--autoplay-policy=no-user-gesture-required"]
     kwargs = dict(user_data_dir=str(PROFILE_DIR), headless=False, args=args, no_viewport=True)
+    ctx = None
     if BROWSER_CHANNEL:
         try:
-            return p.chromium.launch_persistent_context(channel=BROWSER_CHANNEL, **kwargs)
+            ctx = p.chromium.launch_persistent_context(channel=BROWSER_CHANNEL, **kwargs)
         except Exception as e:  # Chrome lipsă -> Chromium
             log(f"Nu pot deschide '{BROWSER_CHANNEL}' ({e}); folosesc Chromium Playwright.")
-    return p.chromium.launch_persistent_context(**kwargs)
+    if ctx is None:
+        ctx = p.chromium.launch_persistent_context(**kwargs)
+    ctx.set_default_navigation_timeout(120_000)  # site-ul poate fi lent (2 minute)
+    ctx.set_default_timeout(60_000)
+    return ctx
 
 
 def _has_password_field(page):
