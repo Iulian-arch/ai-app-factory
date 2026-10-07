@@ -36,6 +36,9 @@ LANGUAGE = os.environ.get("LANGUAGE", "ro")
 BROWSER_CHANNEL = os.environ.get("BROWSER_CHANNEL", "chrome")  # "chrome" = Chrome instalat; gol = Chromium Playwright
 LESSON_URL_REGEX = os.environ.get("LESSON_URL_REGEX", r"/(lessons?|lectii|lectie|topic|topics)/")
 MAX_LESSON_HOURS = float(os.environ.get("MAX_LESSON_HOURS", "4"))
+USE_YTDLP = os.environ.get("USE_YTDLP", "0") == "1"  # VdoCipher are DRM -> OBS
+DISABLE_GPU = os.environ.get("DISABLE_GPU", "0") == "1"  # pune 1 dacă OBS înregistrează ecran negru
+BASE_URL = re.match(r"https?://[^/]+", COURSE_URL).group(0)
 
 PROFILE_DIR = HERE / "browser_profile"  # aici rămâne sesiunea de login
 LESSONS_JSON = HERE / "lessons.json"
@@ -74,7 +77,10 @@ def check_output_dir():
 
 def launch_browser(p, fullscreen_args=True):
     args = ["--autoplay-policy=no-user-gesture-required"]
-    kwargs = dict(user_data_dir=str(PROFILE_DIR), headless=False, args=args, no_viewport=True)
+    if DISABLE_GPU:
+        args.append("--disable-gpu")
+    kwargs = dict(user_data_dir=str(PROFILE_DIR), headless=False, args=args, no_viewport=True,
+                  ignore_default_args=["--enable-automation", "--disable-component-update"])
     ctx = None
     if BROWSER_CHANNEL:
         try:
@@ -92,95 +98,85 @@ def _has_password_field(page):
     return page.locator("input[type=password]:visible").count() > 0
 
 
+def is_logged_in(page):
+    """Logat = pe /my-account/ există linkul de deconectare."""
+    return page.locator("a[href*='customer-logout'], a[href*='action=logout']").count() > 0
+
+
+def _check_login(page):
+    page.goto(BASE_URL + "/my-account/", wait_until="domcontentloaded")
+    settle(page)
+    return is_logged_in(page)
+
+
 def login(page):
-    """Încearcă login automat; dacă nu merge, te lasă să te loghezi manual."""
-    page.goto(COURSE_URL, wait_until="domcontentloaded")
-    page.wait_for_timeout(2000)
-    if not _has_password_field(page):
-        base = re.match(r"https?://[^/]+", COURSE_URL).group(0)
-        for path in ("/login/", "/wp-login.php", "/autentificare/", "/my-account/", "/cont/"):
-            if _is_logged_in_page(page):
-                break
-            page.goto(base + path, wait_until="domcontentloaded")
-            if _has_password_field(page):
-                break
+    """Login automat pe /my-account/ (WooCommerce); dacă nu merge, te lasă să te loghezi manual."""
+    if _check_login(page):
+        log("Login: sesiune existentă, sunt logat.")
+        return
     if _has_password_field(page) and SITE_USER and SITE_PASS:
-        pwd = page.locator("input[type=password]:visible").first
-        user = page.locator(
-            "input[type=email]:visible, input[name=log]:visible, input[name=username]:visible, "
-            "input[type=text]:visible"
-        ).first
+        user = page.locator("input[name=username]:visible, input[type=email]:visible, "
+                            "input[type=text]:visible").first
+        pwd = page.locator("input[name=password]:visible, input[type=password]:visible").first
         user.fill(SITE_USER)
         pwd.fill(SITE_PASS)
         pwd.press("Enter")
         settle(page)
-    page.goto(COURSE_URL, wait_until="domcontentloaded")
-    page.wait_for_timeout(2000)
-    if _has_password_field(page) or not _is_logged_in_page(page):
-        log("Nu am putut confirma login-ul automat.")
-        input("Loghează-te MANUAL în fereastra deschisă, intră pe pagina cursului, apoi apasă Enter aici... ")
-        page.goto(COURSE_URL, wait_until="domcontentloaded")
-
-
-def is_logged_in(page):
-    """Logat = există link de deconectare (WooCommerce: customer-logout / logout)."""
-    return page.locator("a[href*='logout'], a[href*='deconect']").count() > 0
-
-
-def _is_logged_in_page(page):
-    return is_logged_in(page) and not _has_password_field(page)
+        if _check_login(page):
+            log("Login automat reușit.")
+            return
+    log("Nu am putut face login automat.")
+    input("Loghează-te MANUAL în fereastra deschisă (pe /my-account/), apoi apasă Enter aici... ")
+    if not _check_login(page):
+        sys.exit("EROARE: tot nu sunt logat. Verifică user/parola și rulează din nou.")
 
 
 _COLLECT_JS = r"""
-(rx) => {
+({rx, start}) => {
   const re = new RegExp(rx);
-  const out = []; let module = null; const seen = new Set();
-  const nodes = document.querySelectorAll('h1,h2,h3,h4,h5,a[href]');
-  for (const n of nodes) {
+  const out = []; let module = start; const seen = new Set();
+  const isMod = t => t.length <= 80 && /^\s*modul\s*\d+/i.test(t);
+  const all = document.querySelectorAll('a[href], h1,h2,h3,h4,h5,h6,div,span,p,strong,b,li');
+  for (const n of all) {
     if (n.tagName === 'A') {
-      const href = n.href;
-      if (re.test(href) && !seen.has(href)) {
-        seen.add(href);
-        out.push({module_title: module, title: (n.textContent || '').trim().replace(/\s+/g,' '), url: href});
+      if (re.test(n.href) && !seen.has(n.href)) {
+        seen.add(n.href);
+        out.push({module_title: module, title: (n.textContent || '').trim().replace(/\s+/g,' '), url: n.href});
       }
-    } else {
+    } else if (n.children.length === 0 || n.matches('.ld-lesson-section-heading,.ld-item-list-section-heading')) {
       const t = (n.textContent || '').trim().replace(/\s+/g,' ');
-      if (t && !n.closest('a')) module = t;
+      if (isMod(t) && !n.closest('a')) module = t;
     }
   }
-  return out;
+  return {items: out, last_module: module};
 }
 """
 
 
+def _course_page_url(n):
+    return COURSE_URL if n == 1 else f"{COURSE_URL}?ld-courseinfo-lesson-page={n}"
+
+
 def collect_lessons(page):
-    """Citește pagina cursului și grupează lecțiile pe module (după titlurile de secțiune)."""
-    page.goto(COURSE_URL, wait_until="domcontentloaded")
-    settle(page)
-    # deschide eventualele module pliate
-    for sel in ("[aria-expanded=false]", ".ld-expand-button", ".expand-all"):
-        for el in page.locator(sel).all()[:50]:
-            try:
-                el.click(timeout=500)
-            except Exception:
-                pass
-    raw = page.evaluate(_COLLECT_JS, LESSON_URL_REGEX)
-    if not raw:  # lecțiile apar poate abia după "Acces curs" / "Start"
-        for label in ("Acces curs", "Start", "Începe", "Continuă"):
-            btn = page.get_by_role("link", name=re.compile(label, re.I)).or_(
-                page.get_by_role("button", name=re.compile(label, re.I)))
-            if btn.count() > 0:
+    """Citește TOATE paginile cursului (LearnDash are paginare) și grupează lecțiile pe module."""
+    raw, seen_urls, module = [], set(), None
+    for n in range(1, 30):
+        page.goto(_course_page_url(n), wait_until="domcontentloaded")
+        settle(page)
+        for sel in (".ld-expand-button", ".ld-expand-button.ld-primary-background"):
+            for el in page.locator(sel).all()[:5]:
                 try:
-                    btn.first.click(timeout=3000)
-                    settle(page)
-                    if page.url.rstrip("/") != COURSE_URL.rstrip("/"):
-                        page.goto(COURSE_URL, wait_until="domcontentloaded")
-                        settle(page)
-                    raw = page.evaluate(_COLLECT_JS, LESSON_URL_REGEX)
-                    if raw:
-                        break
+                    el.click(timeout=800)
                 except Exception:
                     pass
+        res = page.evaluate(_COLLECT_JS, {"rx": LESSON_URL_REGEX, "start": module})
+        new = [i for i in res["items"] if i["url"] not in seen_urls]
+        if not new:
+            break
+        module = res["last_module"]
+        seen_urls.update(i["url"] for i in new)
+        raw.extend(new)
+        log(f"Pagina cursului {n}: {len(new)} lecții noi (total {len(raw)})")
     modules, order = {}, []
     for item in raw:
         key = item["module_title"] or "Fără modul"
@@ -190,8 +186,10 @@ def collect_lessons(page):
         modules[key].append(item)
     lessons = []
     for mi, key in enumerate(order, 1):
+        m = re.search(r"modul\s*(\d+)", key, re.I)
+        num = int(m.group(1)) if m else mi
         for li, item in enumerate(modules[key], 1):
-            lessons.append({"module": mi, "lesson": li, "module_title": key,
+            lessons.append({"module": num, "lesson": li, "module_title": key,
                             "title": item["title"], "url": item["url"]})
     return lessons
 

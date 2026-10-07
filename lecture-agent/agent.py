@@ -68,13 +68,20 @@ def record_with_obs(ctx, lesson, base):
             raise RuntimeError("Nu am găsit niciun player video pe pagină.")
         rec.start()  # 1) pornește OBS
         time.sleep(1.5)
-        vid = frame.locator("video").first
-        vid.click(timeout=5000, force=True)  # gest de utilizator, necesar pentru fullscreen
+        page.bring_to_front()
+        page.keyboard.press("Space")  # gest de utilizator, necesar pentru fullscreen
+        if frame != page.main_frame:  # VdoCipher: playerul e într-un iframe -> fullscreen pe iframe
+            try:
+                frame.frame_element().evaluate("el => el.requestFullscreen()")
+            except Exception as e:
+                c.log(f"Fullscreen iframe a eșuat: {e}")
         frame.evaluate("""async () => {
             const v = document.querySelector('video');
-            try { await v.requestFullscreen(); } catch (e) {}
-            v.currentTime = 0; await v.play();
+            if (!document.fullscreenElement) { try { await v.requestFullscreen(); } catch (e) {} }
+            v.currentTime = 0; v.muted = false; await v.play();
         }""")  # 2) fullscreen + play
+        if not page.evaluate("() => !!document.fullscreenElement"):
+            c.log("ATENȚIE: nu am reușit fullscreen; înregistrarea va include pagina.")
         # 3) așteaptă să se termine
         _wait_end(frame)
         time.sleep(2)
@@ -92,10 +99,15 @@ def record_with_obs(ctx, lesson, base):
 
 
 def _wait_end(frame):
+    js = """() => { const v = document.querySelector('video');
+        return !v || v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5); }"""
     deadline = time.time() + c.MAX_LESSON_HOURS * 3600
     while time.time() < deadline:
-        if frame.evaluate("() => { const v = document.querySelector('video'); return !v || v.ended; }"):
-            return
+        try:
+            if frame.evaluate(js):
+                return
+        except Exception:  # frame reîncărcat; încercăm din nou
+            pass
         time.sleep(3)
     raise TimeoutError("Lecția nu s-a terminat în timpul maxim.")
 
@@ -109,7 +121,7 @@ def process(ctx, lesson, force_obs):
         return
     c.log(f"=== {base}: {lesson['title']} ===")
     if not video:
-        if not force_obs:
+        if c.USE_YTDLP and not force_obs:
             video = try_download(ctx, lesson, base)
         if not video:
             video = record_with_obs(ctx, lesson, base)
