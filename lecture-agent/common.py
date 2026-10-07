@@ -4,7 +4,10 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
+import time
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -37,6 +40,7 @@ BROWSER_CHANNEL = os.environ.get("BROWSER_CHANNEL", "chrome")  # "chrome" = Chro
 LESSON_URL_REGEX = os.environ.get("LESSON_URL_REGEX", r"/(lessons?|lectii|lectie|topic|topics)/")
 MAX_LESSON_HOURS = float(os.environ.get("MAX_LESSON_HOURS", "4"))
 USE_YTDLP = os.environ.get("USE_YTDLP", "0") == "1"  # VdoCipher are DRM -> OBS
+CDP_PORT = int(os.environ.get("CDP_PORT", "9222"))
 DISABLE_GPU = os.environ.get("DISABLE_GPU", "0") == "1"  # pune 1 dacă OBS înregistrează ecran negru
 BASE_URL = re.match(r"https?://[^/]+", COURSE_URL).group(0)
 
@@ -75,23 +79,70 @@ def check_output_dir():
         log("ATENȚIE: spațiu liber sub 20 GB; videoclipurile pot ocupa mult.")
 
 
-def launch_browser(p, fullscreen_args=True):
-    args = ["--autoplay-policy=no-user-gesture-required"]
-    if DISABLE_GPU:
-        args.append("--disable-gpu")
-    kwargs = dict(user_data_dir=str(PROFILE_DIR), headless=False, args=args, no_viewport=True,
-                  ignore_default_args=["--enable-automation", "--disable-component-update"])
-    ctx = None
-    if BROWSER_CHANNEL:
-        try:
-            ctx = p.chromium.launch_persistent_context(channel=BROWSER_CHANNEL, **kwargs)
-        except Exception as e:  # Chrome lipsă -> Chromium
-            log(f"Nu pot deschide '{BROWSER_CHANNEL}' ({e}); folosesc Chromium Playwright.")
-    if ctx is None:
-        ctx = p.chromium.launch_persistent_context(**kwargs)
+_CHROME_PROC = None
+
+
+def _find_chrome():
+    local = os.environ.get("LOCALAPPDATA", "")
+    for p in (os.environ.get("CHROME_PATH", ""),
+              r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+              r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+              os.path.join(local, r"Google\Chrome\Application\chrome.exe")):
+        if p and Path(p).exists():
+            return p
+    return None
+
+
+def _cdp_up():
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json/version", timeout=2)
+        return True
+    except Exception:
+        return False
+
+
+def launch_browser(p):
+    """Pornește Chrome-ul NORMAL (cu DRM/Widevine funcțional) și se conectează la el cu Playwright."""
+    global _CHROME_PROC
+    chrome = _find_chrome()
+    if chrome:
+        if not _cdp_up():
+            cmd = [chrome, f"--remote-debugging-port={CDP_PORT}", f"--user-data-dir={PROFILE_DIR}",
+                   "--autoplay-policy=no-user-gesture-required", "--no-first-run",
+                   "--no-default-browser-check", "--start-maximized"]
+            if DISABLE_GPU:
+                cmd.append("--disable-gpu")
+            _CHROME_PROC = subprocess.Popen(cmd)
+            for _ in range(60):
+                if _cdp_up():
+                    break
+                time.sleep(0.5)
+            else:
+                sys.exit("EROARE: Chrome nu a pornit în modul de control. Închide toate ferestrele Chrome "
+                         "deschise de agent (și din Task Manager) și rulează din nou.")
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{CDP_PORT}")
+        ctx = browser.contexts[0]
+    else:
+        log("Chrome nu a fost găsit (pune CHROME_PATH în .env). Folosesc Chromium Playwright (DRM poate să nu meargă).")
+        ctx = p.chromium.launch_persistent_context(
+            user_data_dir=str(PROFILE_DIR), headless=False, no_viewport=True,
+            args=["--autoplay-policy=no-user-gesture-required"],
+            ignore_default_args=["--enable-automation", "--disable-component-update"])
     ctx.set_default_navigation_timeout(120_000)  # site-ul poate fi lent (2 minute)
     ctx.set_default_timeout(60_000)
     return ctx
+
+
+def close_browser(ctx):
+    try:
+        if ctx.browser is not None and _CHROME_PROC is not None:
+            ctx.browser.close()  # doar deconectare
+        else:
+            ctx.close()
+    except Exception:
+        pass
+    if _CHROME_PROC is not None:
+        _CHROME_PROC.terminate()
 
 
 def _has_password_field(page):
@@ -136,16 +187,21 @@ _COLLECT_JS = r"""
   const re = new RegExp(rx);
   const out = []; let module = start; const seen = new Set();
   const isMod = t => t.length <= 80 && /^\s*modul\s*\d+/i.test(t);
+  const txt = n => (n.textContent || '').trim().replace(/\s+/g,' ');
   const all = document.querySelectorAll('a[href], h1,h2,h3,h4,h5,h6,div,span,p,strong,b,li');
+  // paginile au întâi descrieri de module (fără lecții), apoi lista "Course Content"
+  const hasList = [...all].some(n => n.children.length === 0 && /^course content$/i.test(txt(n)));
+  let inList = !hasList;
   for (const n of all) {
     if (n.tagName === 'A') {
-      if (re.test(n.href) && !seen.has(n.href)) {
+      if (inList && re.test(n.href) && !seen.has(n.href)) {
         seen.add(n.href);
-        out.push({module_title: module, title: (n.textContent || '').trim().replace(/\s+/g,' '), url: n.href});
+        out.push({module_title: module, title: txt(n), url: n.href});
       }
     } else if (n.children.length === 0 || n.matches('.ld-lesson-section-heading,.ld-item-list-section-heading')) {
-      const t = (n.textContent || '').trim().replace(/\s+/g,' ');
-      if (isMod(t) && !n.closest('a')) module = t;
+      const t = txt(n);
+      if (!inList && /^course content$/i.test(t)) inList = true;
+      else if (inList && isMod(t) && !n.closest('a')) module = t;
     }
   }
   return {items: out, last_module: module};

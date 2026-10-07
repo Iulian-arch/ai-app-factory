@@ -49,7 +49,7 @@ def main():
         report["my_account"] = snapshot(page, "myaccount", base + "/my-account/")
         report["first_lesson"] = snapshot(page, "lesson1", base + "/lessons/introducere/")
         report["first_lesson"]["video_frames"] = [f.url for f in page.frames if f.locator("video").count() > 0]
-        ctx.close()
+        c.close_browser(ctx)
     (c.HERE / "recon_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print("Gata. Trimite-mi recon_report.json (și, dacă poți, recon_course.png și recon_myaccount.png).")
 

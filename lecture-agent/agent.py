@@ -166,7 +166,7 @@ def main():
             else:
                 failed.append(c.lesson_basename(l["module"], l["lesson"]))
         c.log("GATA." + (f" Eșuate: {', '.join(failed)}" if failed else " Toate lecțiile au fost procesate."))
-        ctx.close()
+        c.close_browser(ctx)
 
 
 if __name__ == "__main__":
