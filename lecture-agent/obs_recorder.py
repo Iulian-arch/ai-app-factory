@@ -1,4 +1,6 @@
 """Comandă OBS prin WebSocket (inclus în OBS 28+)."""
+import json
+import logging
 import os
 import shutil
 import subprocess
@@ -6,6 +8,8 @@ import time
 from pathlib import Path
 
 import obsws_python as obs
+
+logging.getLogger("obsws_python").setLevel(logging.CRITICAL)  # fără stack trace la fiecare încercare
 
 from common import FatalError, OBS_HOST, OBS_PASSWORD, OBS_PORT
 
@@ -24,6 +28,33 @@ def _connect():
     return obs.ReqClient(host=OBS_HOST, port=OBS_PORT, password=OBS_PASSWORD, timeout=10)
 
 
+def _obs_running():
+    try:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq obs64.exe"], capture_output=True, text=True).stdout
+        return "obs64.exe" in out
+    except Exception:
+        return False
+
+
+def _ensure_websocket_config():
+    """Activează serverul WebSocket în setările OBS (doar când OBS e oprit). Face copie de siguranță."""
+    cfg_dir = Path(os.environ.get("APPDATA", "")) / "obs-studio" / "plugin_config" / "obs-websocket"
+    cfg = cfg_dir / "config.json"
+    data = {}
+    if cfg.exists():
+        try:
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        shutil.copy(cfg, cfg.with_name("config.json.bak-agent"))
+    data.update({"server_enabled": True, "server_port": OBS_PORT, "alerts_enabled": False,
+                 "first_load": False, "auth_required": bool(OBS_PASSWORD),
+                 "server_password": OBS_PASSWORD})
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    print(f"Am activat WebSocket în setările OBS ({cfg}), port {OBS_PORT}.", flush=True)
+
+
 class Recorder:
     def __init__(self):
         try:
@@ -32,8 +63,17 @@ class Recorder:
         except Exception as first_error:
             err = first_error
         exe = _find_obs()
-        if exe:  # OBS nu rulează (sau nu e gata): îl pornim noi
-            print("OBS nu răspunde; îl pornesc...", flush=True)
+        if _obs_running():
+            raise FatalError(
+                "OBS rulează, dar serverul WebSocket nu răspunde (port %s).\n"
+                "ÎNCHIDE OBS complet (File -> Exit; verifică și iconița de lângă ceas) și rulează din nou: "
+                "agentul îl pornește și îl configurează singur." % OBS_PORT) from err
+        if exe:  # OBS nu rulează: îl configurăm și îl pornim noi
+            try:
+                _ensure_websocket_config()
+            except Exception as e:
+                print(f"Nu am putut scrie setările OBS: {e}", flush=True)
+            print("Pornesc OBS...", flush=True)
             subprocess.Popen([exe, "--disable-shutdown-check"], cwd=str(Path(exe).parent))
             for _ in range(30):
                 time.sleep(3)
@@ -46,8 +86,7 @@ class Recorder:
         raise FatalError(
             f"Nu mă pot conecta la OBS ({OBS_HOST}:{OBS_PORT}): {err}\n"
             + ("" if exe else "Nu am găsit OBS pe calculator: pune calea la obs64.exe în .env (OBS_PATH=...).\n")
-            + "Verifică în OBS: Tools -> WebSocket Server Settings -> 'Enable WebSocket server' (port 4455) "
-            "și că parola din OBS este aceeași cu OBS_PASSWORD din fișierul .env.") from err
+            + "Verifică că OBS_PASSWORD din .env este completat și rulează din nou.") from err
 
     def start(self):
         if self.cl.get_record_status().output_active:
