@@ -5,3 +5,5 @@ lessons.json
 recon_report.json
 agent.log
 __pycache__/
+recon_*.png
+recon_*.html

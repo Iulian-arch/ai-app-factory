@@ -108,9 +108,13 @@ def login(page):
         page.goto(COURSE_URL, wait_until="domcontentloaded")
 
 
+def is_logged_in(page):
+    """Logat = există link de deconectare (WooCommerce: customer-logout / logout)."""
+    return page.locator("a[href*='logout'], a[href*='deconect']").count() > 0
+
+
 def _is_logged_in_page(page):
-    # Euristică: pe pagina cursului există linkuri către lecții și nu există câmp de parolă.
-    return (not _has_password_field(page)) and page.locator("a").count() > 5
+    return is_logged_in(page) and not _has_password_field(page)
 
 
 _COLLECT_JS = r"""
