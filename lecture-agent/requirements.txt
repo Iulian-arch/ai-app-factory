@@ -1,0 +1,5 @@
+playwright
+yt-dlp
+obsws-python
+# doar dacă Buzz nu merge din linia de comandă:
+# faster-whisper
