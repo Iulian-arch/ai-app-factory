@@ -22,8 +22,8 @@ LINKS_JS = """() => {
 
 
 def snapshot(page, name, url):
-    page.goto(url, wait_until="networkidle")
-    page.wait_for_timeout(2000)
+    page.goto(url, wait_until="domcontentloaded")
+    c.settle(page)
     page.screenshot(path=str(c.HERE / f"recon_{name}.png"), full_page=True)
     (c.HERE / f"recon_{name}.html").write_text(page.content(), encoding="utf-8")
     return {

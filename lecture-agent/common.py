@@ -41,6 +41,15 @@ PROFILE_DIR = HERE / "browser_profile"  # aici rămâne sesiunea de login
 LESSONS_JSON = HERE / "lessons.json"
 
 
+def settle(page, ms=8000):
+    """Așteaptă să se încarce pagina, dar nu blochează dacă site-ul face cereri la nesfârșit."""
+    try:
+        page.wait_for_load_state("networkidle", timeout=ms)
+    except Exception:
+        pass
+    page.wait_for_timeout(1500)
+
+
 def log(msg):
     print(msg, flush=True)
     with open(HERE / "agent.log", "a", encoding="utf-8") as f:
@@ -99,7 +108,7 @@ def login(page):
         user.fill(SITE_USER)
         pwd.fill(SITE_PASS)
         pwd.press("Enter")
-        page.wait_for_load_state("networkidle")
+        settle(page)
     page.goto(COURSE_URL, wait_until="domcontentloaded")
     page.wait_for_timeout(2000)
     if _has_password_field(page) or not _is_logged_in_page(page):
@@ -141,7 +150,8 @@ _COLLECT_JS = r"""
 
 def collect_lessons(page):
     """Citește pagina cursului și grupează lecțiile pe module (după titlurile de secțiune)."""
-    page.goto(COURSE_URL, wait_until="networkidle")
+    page.goto(COURSE_URL, wait_until="domcontentloaded")
+    settle(page)
     # deschide eventualele module pliate
     for sel in ("[aria-expanded=false]", ".ld-expand-button", ".expand-all"):
         for el in page.locator(sel).all()[:50]:
@@ -157,9 +167,10 @@ def collect_lessons(page):
             if btn.count() > 0:
                 try:
                     btn.first.click(timeout=3000)
-                    page.wait_for_load_state("networkidle")
+                    settle(page)
                     if page.url.rstrip("/") != COURSE_URL.rstrip("/"):
-                        page.goto(COURSE_URL, wait_until="networkidle")
+                        page.goto(COURSE_URL, wait_until="domcontentloaded")
+                        settle(page)
                     raw = page.evaluate(_COLLECT_JS, LESSON_URL_REGEX)
                     if raw:
                         break
